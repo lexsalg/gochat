@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
 	"log"
 	"sync"
 )
@@ -20,7 +21,8 @@ var Users = struct {
 }{m: make(map[string]User)}
 
 type User struct {
-	Username string
+	Username  string
+	WebSocket *websocket.Conn
 }
 
 func HelloWorld(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +49,7 @@ func main() {
 	m.HandleFunc("/static", LoadStatic).Methods("GET")
 	m.HandleFunc("/validate", Validate).Methods("POST")
 
-	m.HandleFunc("/chat", WebSocket).Methods("GET")
+	m.HandleFunc("/chat/{username}", WebSocket).Methods("GET")
 
 	http.Handle("/", m)
 	http.Handle("/css/", http.StripPrefix("/css/", cssHandle))
@@ -56,11 +58,61 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8000", nil))
 }
 
+func CreateUser(username string, ws *websocket.Conn) User {
+	return User{username, ws}
+}
+
+func AddUserListMap(user User) {
+	Users.Lock()
+	defer Users.Unlock()
+
+	Users.m[user.Username] = user
+}
+func RemoveUserListMap(username string) {
+	Users.Lock()
+	defer Users.Unlock()
+
+	delete(Users.m, username)
+}
+
+func SendMessage(typeMessage int, message []byte) {
+	Users.RLock()
+	defer Users.RUnlock()
+
+	for _, user := range Users.m {
+		if err := user.WebSocket.WriteMessage(typeMessage, message); err != nil {
+			return
+		}
+	}
+}
+
+func ToArrayByte(value string) []byte {
+	return []byte(value)
+}
+
+func ContactMessage(username string, arr []byte) string {
+	return username + " : " + string(arr[:])
+}
+
 func WebSocket(w http.ResponseWriter, r *http.Request) {
-	//ws, err := websocket.Upgrade(w, r, nil, 1024, 1024)
-	//if err != nil {
-	//	log.Println(err.Error())
-	//}
+	params := mux.Vars(r)
+	username := params["username"]
+	ws, err := websocket.Upgrade(w, r, nil, 1024, 1024)
+	if err != nil {
+		log.Println(err.Error())
+	}
+	currentUser := CreateUser(username, ws)
+	AddUserListMap(currentUser)
+	log.Println("usuario agregado")
+	for {
+		typeMessage, message, err := ws.ReadMessage()
+		if err != nil {
+			RemoveUserListMap(username)
+			return
+		}
+		finalMessage := ContactMessage(username, message)
+		SendMessage(typeMessage, ToArrayByte(finalMessage))
+	}
 }
 
 func UserExist(username string) bool {
@@ -74,6 +126,8 @@ func UserExist(username string) bool {
 }
 
 func Validate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 	_ = r.ParseForm()
 	username := r.FormValue("username")
 	res := CreateResponse("Ya existe usuario", false)

@@ -13,3 +13,11 @@ html, body, #registro {
     justify-content: center;
     align-items: center;
 }
+
+#container-chat {
+    display: none;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+}
